@@ -35,7 +35,10 @@ jobs:
       - name: Prepare pinned upstream source
         run: bash tools/build-android.sh --prepare
 
-      - name: Install SDK versions requested by upstream
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install upstream SDK and NDK
         shell: bash
         run: |
           python3 - <<'PY'
