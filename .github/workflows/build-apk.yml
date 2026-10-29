@@ -1,0 +1,81 @@
+name: Build OpenCode Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master, build/opencode-android]
+    paths:
+      - runtime/**
+      - tools/**
+      - tests/**
+      - .github/workflows/build-apk.yml
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java for Android SDK tools
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Check runtime and build tooling
+        run: |
+          python3 -m unittest discover -s tests -v
+          bash -n runtime/start.sh runtime/guest-run.sh tools/build-android.sh
+          sh -n runtime/guest-setup.sh runtime/profile-hook.sh
+
+      - name: Prepare pinned upstream source
+        run: bash tools/build-android.sh --prepare
+
+      - name: Install SDK versions requested by upstream
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          import subprocess
+          props = Path('build/termux-app/gradle.properties').read_text()
+          packages = ['platform-tools']
+          for key, pattern, prefix in [
+              ('compileSdkVersion', r'[0-9]+', 'platforms;android-'),
+              ('ndkVersion', r'[0-9]+\.[0-9]+\.[0-9]+', 'ndk;'),
+          ]:
+              match = re.search(r'^' + key + r'\s*=\s*(' + pattern + r')\s*$', props, re.M)
+              if not match:
+                  raise SystemExit('Cannot resolve upstream SDK property: ' + key)
+              packages.append(prefix + match[1])
+          subprocess.run(['sdkmanager', *packages], check=True)
+          PY
+
+      - name: Set up Java for upstream Gradle 7.2
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '11'
+
+      - name: Build APK and corresponding source
+        run: bash tools/build-android.sh
+
+      - name: Record artifact checksums
+        run: |
+          cd dist
+          sha256sum *.apk *-corresponding-source.zip > SHA256SUMS.txt
+
+      - name: Save APK and source artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencode-android-apk
+          path: |
+            dist/*.apk
+            dist/*-corresponding-source.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
